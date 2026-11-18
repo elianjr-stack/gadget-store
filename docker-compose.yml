@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  # ── PostgreSQL Database ──
+  postgres:
+    image: postgres:16-alpine
+    container_name: gadgetstore-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gadgetstore
+      POSTGRES_USER: gadgetstore
+      POSTGRES_PASSWORD: secret
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U gadgetstore']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis Cache ──
+  redis:
+    image: redis:7-alpine
+    container_name: gadgetstore-redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── NestJS Backend API ──
+  backend:
+    build:
+      context: ./packages/backend
+      dockerfile: Dockerfile
+    container_name: gadgetstore-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://gadgetstore:secret@postgres:5432/gadgetstore?schema=public
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: production
+      PORT: 4000
+    ports:
+      - '4000:4000'
+    volumes:
+      - ./packages/backend:/app
+      - /app/node_modules
+
+  # ── Next.js Storefront ──
+  frontend:
+    build:
+      context: ./packages/frontend
+      dockerfile: Dockerfile
+    container_name: gadgetstore-web
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      NEXT_PUBLIC_API_URL: http://backend:4000
+    ports:
+      - '3000:3000'
+
+  # ── Admin Panel ──
+  admin:
+    build:
+      context: ./packages/admin
+      dockerfile: Dockerfile
+    container_name: gadgetstore-admin
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      NEXT_PUBLIC_API_URL: http://backend:4000
+    ports:
+      - '3001:3001'
+
+volumes:
+  postgres_data:
+  redis_data:
